@@ -1,43 +1,43 @@
-const db = require('../db');
+const { pool } = require('../db');
 
-exports.getResumen = (req, res) => {
+exports.getResumen = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({ error: 'No autenticado' });
-    }
-
     const userId = req.user.id;
 
-    // 🔹 NOTA: Usa comillas SIMPLES ' para valores de texto en SQL
-    const ingresos = db
-      .prepare('SELECT COALESCE(SUM(monto), 0) as total FROM movimientos WHERE usuario_id = ? AND tipo = \'ingreso\'')
-      .get(userId)?.total || 0;
+    // 🔹 Totales
+    const ingresosRes = await pool.query(
+      `SELECT COALESCE(SUM(monto), 0) as total 
+       FROM movimientos WHERE usuario_id = $1 AND tipo = 'ingreso'`,
+      [userId]
+    );
+    const ingresos = parseFloat(ingresosRes.rows[0].total);
 
-    const gastos = db
-      .prepare('SELECT COALESCE(SUM(monto), 0) as total FROM movimientos WHERE usuario_id = ? AND tipo = \'gasto\'')
-      .get(userId)?.total || 0;
+    const gastosRes = await pool.query(
+      `SELECT COALESCE(SUM(monto), 0) as total 
+       FROM movimientos WHERE usuario_id = $1 AND tipo = 'gasto'`,
+      [userId]
+    );
+    const gastos = parseFloat(gastosRes.rows[0].total);
 
-    // 🔹 Gastos por categoría (con comillas simples)
-    const porCategoria = db
-      .prepare(`
-        SELECT categoria, SUM(monto) as total 
-        FROM movimientos 
-        WHERE usuario_id = ? AND tipo = 'gasto' 
-        GROUP BY categoria 
-        ORDER BY total DESC
-      `)
-      .all(userId);
+    // 🔹 Por categoría
+    const categoriaRes = await pool.query(
+      `SELECT categoria, SUM(monto) as total 
+       FROM movimientos 
+       WHERE usuario_id = $1 AND tipo = 'gasto' 
+       GROUP BY categoria 
+       ORDER BY total DESC`,
+      [userId]
+    );
 
-    // 🔹 Últimos movimientos
-    const recientes = db
-      .prepare(`
-        SELECT id, tipo, categoria, monto, fecha, nota 
-        FROM movimientos 
-        WHERE usuario_id = ? 
-        ORDER BY fecha DESC, id DESC 
-        LIMIT 5
-      `)
-      .all(userId);
+    // 🔹 Recientes
+    const recientesRes = await pool.query(
+      `SELECT id, tipo, categoria, monto, fecha, nota 
+       FROM movimientos 
+       WHERE usuario_id = $1 
+       ORDER BY fecha DESC, id DESC 
+       LIMIT 5`,
+      [userId]
+    );
 
     res.json({
       ok: true,
@@ -45,11 +45,10 @@ exports.getResumen = (req, res) => {
         balance: ingresos - gastos,
         ingresos,
         gastos,
-        porCategoria: porCategoria.length ? porCategoria : [],
-        recientes
+        porCategoria: categoriaRes.rows,
+        recientes: recientesRes.rows
       }
     });
-
   } catch (err) {
     console.error('❌ Error en dashboard:', err.message);
     res.status(500).json({ error: 'Error: ' + err.message });
